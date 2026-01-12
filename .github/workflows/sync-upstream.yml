@@ -1,0 +1,117 @@
+---
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: "0 2 * * *"  # Run daily at 2:00 AM UTC
+  workflow_dispatch:  # Allow manual trigger
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: dev
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add upstream remote
+        run: |
+          if ! git remote get-url upstream >/dev/null 2>&1; then
+            git remote add upstream \
+              https://github.com/anomalyco/opencode.git
+          else
+            git remote set-url upstream \
+              https://github.com/anomalyco/opencode.git
+          fi
+
+      - name: Check for upstream changes
+        id: check
+        run: |
+          git fetch upstream dev
+          BEHIND=$(git rev-list --count HEAD..upstream/dev)
+          echo "behind=$BEHIND" >> $GITHUB_OUTPUT
+          echo "Commits behind upstream: $BEHIND"
+
+      - name: Merge upstream changes
+        if: steps.check.outputs.behind != '0'
+        id: merge
+        run: |
+          # Try to merge upstream/dev into current branch
+          if git merge upstream/dev --no-edit; then
+            echo "Successfully merged upstream changes"
+            echo "success=true" >> $GITHUB_OUTPUT
+            echo "has_conflicts=false" >> $GITHUB_OUTPUT
+          else
+            echo "Merge conflicts detected"
+            echo "success=false" >> $GITHUB_OUTPUT
+            echo "has_conflicts=true" >> $GITHUB_OUTPUT
+            git merge --abort
+          fi
+
+      - name: Push changes directly
+        if: >-
+          steps.check.outputs.behind != '0' &&
+          steps.merge.outputs.success == 'true'
+        run: |
+          git push origin dev
+
+      - name: Create sync branch for conflicts
+        if: >-
+          steps.check.outputs.behind != '0' &&
+          steps.merge.outputs.has_conflicts == 'true'
+        run: |
+          BRANCH_NAME="sync-upstream-$(date +%Y%m%d-%H%M%S)"
+          git checkout -b "$BRANCH_NAME"
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_ENV
+
+      - name: Merge with conflict markers on sync branch
+        if: >-
+          steps.check.outputs.behind != '0' &&
+          steps.merge.outputs.has_conflicts == 'true'
+        run: |
+          # Attempt merge to include conflict markers in PR.
+          # If conflicts occur, commit the conflicted state so that
+          # the pull request branch contains the necessary changes.
+          if ! git merge upstream/dev --no-edit; then
+            git add -A
+            git commit -m \
+              "chore: sync upstream from anomalyco/opencode (conflicts)"
+          fi
+
+      - name: Create PR for conflicts
+        if: >-
+          steps.check.outputs.behind != '0' &&
+          steps.merge.outputs.has_conflicts == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: >-
+            chore: sync upstream changes from anomalyco/opencode
+          title: "🔄 Sync upstream changes from anomalyco/opencode"
+          body: |
+            This PR syncs changes from the upstream repository
+            [anomalyco/opencode](https://github.com/anomalyco/opencode).
+
+            ⚠️ **Merge conflicts were detected** and need to be
+            resolved manually.
+
+            Please review and resolve any conflicts before merging.
+          branch: ${{ env.branch_name }}
+          base: dev
+          delete-branch: true
