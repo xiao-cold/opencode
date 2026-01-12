@@ -28,8 +28,13 @@ jobs:
 
       - name: Add upstream remote
         run: |
-          git remote add upstream \
-            https://github.com/anomalyco/opencode.git || true
+          if ! git remote get-url upstream >/dev/null 2>&1; then
+            git remote add upstream \
+              https://github.com/anomalyco/opencode.git
+          else
+            git remote set-url upstream \
+              https://github.com/anomalyco/opencode.git
+          fi
           git fetch upstream
 
       - name: Check for upstream changes
@@ -70,8 +75,16 @@ jobs:
 
       - name: Attempt merge on sync branch
         if: steps.merge.outputs.has_conflicts == 'true'
+        continue-on-error: true
         run: |
-          git merge upstream/dev --no-edit || true
+          # Attempt merge to include conflict markers in PR
+          git merge upstream/dev --no-edit
+
+      - name: Add conflict markers if merge failed
+        if: steps.merge.outputs.has_conflicts == 'true'
+        run: |
+          # Ensure we have the conflicted state for the PR
+          git status
 
       - name: Create PR for conflicts
         if: steps.merge.outputs.has_conflicts == 'true'
