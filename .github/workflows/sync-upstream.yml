@@ -1,14 +1,17 @@
 ---
 name: Sync Upstream
 
-"on":
+on:
   schedule:
     - cron: "0 2 * * *"  # Run daily at 2:00 AM UTC
   workflow_dispatch:  # Allow manual trigger
 
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: true
+
 jobs:
   sync:
-    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -18,6 +21,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          ref: dev
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -35,7 +39,6 @@ jobs:
             git remote set-url upstream \
               https://github.com/anomalyco/opencode.git
           fi
-          git fetch upstream
 
       - name: Check for upstream changes
         id: check
@@ -46,7 +49,7 @@ jobs:
           echo "Commits behind upstream: $BEHIND"
 
       - name: Merge upstream changes
-        if: steps.check.outputs.behind > 0
+        if: steps.check.outputs.behind != '0'
         id: merge
         run: |
           # Try to merge upstream/dev into current branch
@@ -62,32 +65,42 @@ jobs:
           fi
 
       - name: Push changes directly
-        if: steps.merge.outputs.success == 'true'
+        if: >-
+          steps.check.outputs.behind != '0' &&
+          steps.merge.outputs.success == 'true'
         run: |
           git push origin dev
 
       - name: Create sync branch for conflicts
-        if: steps.merge.outputs.has_conflicts == 'true'
+        if: >-
+          steps.check.outputs.behind != '0' &&
+          steps.merge.outputs.has_conflicts == 'true'
         run: |
           BRANCH_NAME="sync-upstream-$(date +%Y%m%d-%H%M%S)"
           git checkout -b "$BRANCH_NAME"
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_ENV
 
-      - name: Attempt merge on sync branch
-        if: steps.merge.outputs.has_conflicts == 'true'
-        continue-on-error: true
+      - name: Merge with conflict markers on sync branch
+        if: >-
+          steps.check.outputs.behind != '0' &&
+          steps.merge.outputs.has_conflicts == 'true'
         run: |
-          # Attempt merge to include conflict markers in PR
-          git merge upstream/dev --no-edit
-
-      - name: Add conflict markers if merge failed
-        if: steps.merge.outputs.has_conflicts == 'true'
-        run: |
-          # Ensure we have the conflicted state for the PR
-          git status
+          # Attempt merge to include conflict markers in PR.
+          # If conflicts occur, commit the conflicted state so that
+          # the pull request branch contains the necessary changes.
+          if git merge upstream/dev --no-edit; then
+            echo "Successfully merged upstream changes on sync branch"
+          else
+            echo "Merge conflicts detected; committing for PR"
+            git add -A
+            git commit -m \
+              "chore: sync upstream from anomalyco/opencode (conflicts)"
+          fi
 
       - name: Create PR for conflicts
-        if: steps.merge.outputs.has_conflicts == 'true'
+        if: >-
+          steps.check.outputs.behind != '0' &&
+          steps.merge.outputs.has_conflicts == 'true'
         uses: peter-evans/create-pull-request@v6
         with:
           token: ${{ secrets.GITHUB_TOKEN }}

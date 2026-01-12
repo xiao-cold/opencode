@@ -8,7 +8,7 @@ The `sync-upstream.yml` workflow automatically synchronizes changes from the ups
 
 ### How It Works
 
-- **Schedule**: Runs daily at 2:00 AM UTC
+- **Schedule**: Runs daily at 2:00 AM UTC on the `dev` branch
 - **Manual Trigger**: Can be triggered manually via the GitHub Actions UI
 - **Auto-merge**: If no conflicts are detected, changes are automatically merged and pushed to the `dev` branch
 - **Conflict Handling**: If merge conflicts are detected, a pull request is created with the conflicts for manual resolution
@@ -44,7 +44,7 @@ If the workflow fails:
 
 - Check the workflow run logs in the Actions tab
 - Ensure the repository has proper permissions (contents: write, pull-requests: write)
-- Verify that the `dev` branch is the default branch
+- Ensure the workflow is configured to check out and operate on the `dev` branch
 - Check if there are any network issues or API rate limits
 
 ### Related Files
