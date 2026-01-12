@@ -88,10 +88,7 @@ jobs:
           # Attempt merge to include conflict markers in PR.
           # If conflicts occur, commit the conflicted state so that
           # the pull request branch contains the necessary changes.
-          if git merge upstream/dev --no-edit; then
-            echo "Successfully merged upstream changes on sync branch"
-          else
-            echo "Merge conflicts detected; committing for PR"
+          if ! git merge upstream/dev --no-edit; then
             git add -A
             git commit -m \
               "chore: sync upstream from anomalyco/opencode (conflicts)"
